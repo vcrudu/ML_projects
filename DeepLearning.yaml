@@ -1,0 +1,100 @@
+---
+Parameters:
+  InstanceType:
+    Description: EC2 instance type 
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.large
+      - g2.2xlarge
+      - p3.2xlarge
+      - p3.8xlarge
+    ConstraintDescription: Only specified EC2 instance types are allowed.
+  VPC:
+    Description: VPC to operate in
+    Type: AWS::EC2::VPC::Id
+  DataVolumeId:
+    Description: Existing data volume 
+    Type: AWS::EC2::Volume::Id
+    Default: "vol-04d5028a725c006d9"
+  DataVolumeDeviceName:
+    Description: Existing data volume device name
+    Type: String
+    Default: "/dev/sdb"
+  SubnetID:
+    Description: Subnet IDs that is a List of Subnet Id
+    Type: AWS::EC2::Subnet::Id
+    ConstraintDescription: Subnet must be specified.
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances. Linked to AWS Parameter
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  MyLocalCidrIp:
+    Description: The IP address range that can be used to communicate to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Resources:
+  DeepLearningInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: "ami-078c3ac22c6019640"
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref SubnetID
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref NotebookSecurityGroup
+      Volumes:
+        - Device: !Ref DataVolumeDeviceName
+          VolumeId: !Ref DataVolumeId
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          sudo yum update
+          source activate pytorch_p36
+          sudo mkdir /workspace
+          sudo mount /dev/xvdb /workspace
+          sudo chown 'ec2-user' /workspace
+          sudo cp /workspace/jupyter_notebook_config.json /home/ec2-user/.jupyter/
+          sudo echo "c.NotebookApp.ip = '*'">>/home/ec2-user/.jupyter/jupyter_notebook_config.py
+          sudo cd /workspace
+          sudo chown 'ec2-user' /home/ec2-user/.jupyter/jupyter_notebook_config.json 
+
+  DeepLearningEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref DeepLearningInstance
+  NotebookSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow connections to the Notebook
+      VpcId: !Ref VPC
+  SSHInboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref MyLocalCidrIp
+      GroupId: !GetAtt NotebookSecurityGroup.GroupId
+  NotebookInboundRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 8888
+      ToPort: 8888
+      CidrIp: !Ref MyLocalCidrIp
+      GroupId: !GetAtt NotebookSecurityGroup.GroupId
+  OutboundRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 0
+      ToPort: 65535
+      CidrIp: 0.0.0.0/0
+      GroupId: !GetAtt NotebookSecurityGroup.GroupId
